@@ -23,8 +23,6 @@ import tkinter.filedialog
 
 import numpy as np
 from data_processing import GeoMat
-import pandas as pd
-import skimage as sk
 
 # import custom widgets
 import ui_custom_widgets as ctk 
@@ -263,9 +261,9 @@ class EncapEfficiency():
 
         return mask_all
 
-    def run(mat_image, mask_labels, bg_corr, return_fordisplay = False, pixel_size=(1,1)):
-        print(f'the spacing between pixels is {pixel_size} um ')
-        
+    def run(mat_image, mask_labels, bg_corr, return_fordisplay = False):
+
+
         # Correct background if required
         
         if  bg_corr == 1:
@@ -276,62 +274,54 @@ class EncapEfficiency():
         else:
             bg_corr_type = None
             bg_int = 0
-        def sd_intensity(regionmask, intensity_image):
-            return np.std(intensity_image[regionmask])   
-        
-        data_dict = sk.measure.regionprops_table(mask_labels, intensity_image=mat_image, properties=('label', 'area', 'centroid', 'coords', 'eccentricity', 'intensity_mean' ), cache = True, extra_properties=(sd_intensity,), spacing=pixel_size)
-        data = pd.DataFrame(data_dict)
-        # xall = []
-        # yall = []
-        # roi_labels = np.unique(mask_labels)
-        # results_encap = []
-        # selected_labels = []
-        # roi_areas = []
-        
+
+        xall = []
+        yall = []
+        roi_labels = np.unique(mask_labels)
+        results_encap = []
+        selected_labels = []
+        roi_areas = []
         
 
-        # for id_roi in roi_labels:
-        #     print(f'Processing {id_roi}')
-        #     roi_indices = np.argwhere(mask_labels==id_roi)
-        #     ymin, xmin = np.min(roi_indices, axis=0)
-        #     ymax, xmax = np.max(roi_indices, axis=0)
+        for id_roi in roi_labels:
+            print(f'Processing {id_roi}')
+            roi_indices = np.argwhere(mask_labels==id_roi)
+            ymin, xmin = np.min(roi_indices, axis=0)
+            ymax, xmax = np.max(roi_indices, axis=0)
             
-        #     if xmin == xmax or ymin == ymax:
-        #         print(f'Warning: ROI with id {id_roi} too small. Ignoring...')
-        #         continue
+            if xmin == xmax or ymin == ymax:
+                print(f'Warning: ROI with id {id_roi} too small. Ignoring...')
+                continue
             
-        #     image_ROI = mat_image[ymin:ymax+1, xmin:xmax+1]
-        #     mask_labels_ROI = mask_labels[ymin:ymax+1, xmin:xmax+1]
-        #     sum_roi_int = np.sum(image_ROI[mask_labels_ROI==id_roi])
-        #     bg_int = 0 
-        #     x = np.mean(roi_indices[:, 1])
-        #     y = np.mean(roi_indices[:, 0])
-        #     roi_area = roi_indices.shape[0]
-            
-
-            # # If required, correct the ROI corner background
-            # if bg_corr_type == 'ROI corner':
-            #         bg_int = ImageCorrection.substract_background(image_ROI.astype('float16'), bg_corr_type, inplace = False)
-            
-            
-            # xall.append(x)
-            # yall.append(y)
-            # selected_labels.append(id_roi)
-            # results_encap.append(sum_roi_int/roi_area)
-            # roi_areas.append(roi_area)
+            image_ROI = mat_image[ymin:ymax+1, xmin:xmax+1]
+            mask_labels_ROI = mask_labels[ymin:ymax+1, xmin:xmax+1]
+            sum_roi_int = np.sum(image_ROI[mask_labels_ROI==id_roi])
+            bg_int = 0 #TODO
+            x = np.mean(roi_indices[:, 1])
+            y = np.mean(roi_indices[:, 0])
+            roi_area = roi_indices.shape[0]
             
 
-        # results_encap_all = np.stack((selected_labels, xall,yall, results_encap , roi_areas), axis = 1)
-        
+            # If required, correct the ROI corner background
+            if bg_corr_type == 'ROI corner':
+                    bg_int = ImageCorrection.substract_background(image_ROI.astype('float16'), bg_corr_type, inplace = False)
+            
+            
+            xall.append(x)
+            yall.append(y)
+            selected_labels.append(id_roi)
+            results_encap.append(sum_roi_int/roi_area)
+            roi_areas.append(roi_area)
+            
+
+        results_encap_all = np.stack((selected_labels, xall,yall, results_encap , roi_areas), axis = 1)
+    
     
     
     
         if return_fordisplay is True:
-            results_display = np.stack((data['centroid-0'][1:], data['centroid-1'][1:], data['intensity_mean'][1:]), axis = 1)
+            results_display = np.stack((xall[1:], yall[1:], results_encap[1:]), axis = 1)
         else:
             results_display = None
 
-         
-        print("finished encapsulation analysis!")
-
-        return data, results_display 
+        return results_encap_all, results_display

@@ -158,7 +158,7 @@ class FileManager():
         self.show_ascurrent('image', new_current_img)
 
         # Read the information from the current image
-        source_image = self.read_selected(new_current_img)
+        source_image, img_info = self.read_selected(new_current_img)
 
         # Update imagesource dictionary and current image variable
         self.controller.appdata_imagesource = {'image': source_image, 
@@ -173,7 +173,7 @@ class FileManager():
         selected_img = self.imgList.get(selected_item)
 
         # Read the information from the current image
-        source_image = self.read_selected(selected_img)
+        source_image, img_info = self.read_selected(selected_img)
 
         # Update the display without updating the current image
         self.controller.gw_maindisplay.clear_showimage(source_image, update_current = False)
@@ -188,7 +188,7 @@ class FileManager():
         # Read the image
         img_info, img_n, source_image = FileImage.open(filename, verbose = False)
 
-        return source_image
+        return source_image, img_info
 
     def close_panel(self):
 

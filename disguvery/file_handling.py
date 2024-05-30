@@ -19,7 +19,9 @@
 ###############################################################################
 
 from PIL import Image, ImageSequence
+from PIL.TiffTags import TAGS
 import numpy as np
+import pandas as pd
 
 class FileImage():
 
@@ -29,7 +31,7 @@ class FileImage():
         # We read the image and overwrite the info associated to it
 
         # check if the image is supported and read it
-        source_image = FileImage.read_supported(filename)
+        source_image, meta_dict = FileImage.read_supported(filename)
         image_info = None
         image_name = None
 
@@ -39,7 +41,7 @@ class FileImage():
                 print(f'Image sucessfully loaded as {source_image.dtype.name}')
 
             # get image and file information
-            image_info, image_name= FileImage.get_info(filename, source_image, verbose)
+            image_info, image_name= FileImage.get_info(filename, source_image, meta_dict, verbose)
 
         return image_info, image_name, source_image
 
@@ -69,6 +71,7 @@ class FileImage():
                 for frame in ImageSequence.Iterator(img):
                     ic += 1
                     all_frames.append(np.array(frame))
+                meta_dict = { TAGS[key]: img.tag[key] for key in img.tag.keys()}
                 # Close the image file
                 img.close()
                 # Convert list to numpy array
@@ -87,10 +90,9 @@ class FileImage():
                     # If image is [NxMxCxS], take only [NxMxC]
                     source_image = source_image[:,:,:]
 
-        return source_image
+        return source_image, meta_dict
 
-    def get_info(filename, source_image, verbose = True):
-
+    def get_info(filename, source_image, meta_dict, verbose = True):
         # Initialise dictionary
         image_info = {}
         
@@ -104,7 +106,11 @@ class FileImage():
         # get the image information
         image_info['size_x'] = source_image.shape[0]
         image_info['size y'] = source_image.shape[1]
-        
+
+        # get image pixel resolution 
+        image_info['XRes'] = meta_dict['XResolution'][0][1]/meta_dict['XResolution'][0][0]
+        image_info['YRes'] = meta_dict['YResolution'][0][1]/meta_dict['YResolution'][0][0]
+
         # if there's more than one channel, get the info
         try:
             nchannels = source_image.shape[2]
@@ -194,81 +200,85 @@ class FileExport():
             print(f'Regions mask saved in {filemask}')
 
     def intensity_profiles(filename, profiles_results):
+        filename = filename.replace('.csv', '_intensity_profiles.csv')
+        profiles_results.to_csv(filename, index=False)
+        print(f'Intensity profiles saved in {filename}')
+    
+        # # # The results are saved differently whether they are angular or radial profiles
 
-        # The results are saved differently whether they are angular or radial profiles
+        # # For radial profiles, per vesicle, per channel, we have a matrix: [mean r, mean int, min, max, sum]
+        # header_main_rad = '# Ves ID, Channel, Mean radius (pix), Mean Intensity (a.u.), Min. Intensity, Max. Intensity, Sum Intensity \n'
+        # # For angular profiles, per vesicle, per channel, we have two matrices. The first one is like the radial profiles
+        # # except for mean radius, is mean theta
+        # header_main_theta = header_main_rad.replace('radius (pix)', 'theta (deg)')
+        # header_sec_theta = 'Ves ID, Theta (deg), ri (pix), ro (pix)'
 
-        # For radial profiles, per vesicle, per channel, we have a matrix: [mean r, mean int, min, max, sum]
-        header_main_rad = '# Ves ID, Channel, Mean radius (pix), Mean Intensity (a.u.), Min. Intensity, Max. Intensity, Sum Intensity \n'
-        # For angular profiles, per vesicle, per channel, we have two matrices. The first one is like the radial profiles
-        # except for mean radius, is mean theta
-        header_main_theta = header_main_rad.replace('radius (pix)', 'theta (deg)')
-        header_sec_theta = 'Ves ID, Theta (deg), ri (pix), ro (pix)'
+        # # Write the results for the main matrix, in two different files
+        # filename_rad = filename.replace('.csv', '_radial_profiles.csv')
+        # filename_angular = filename.replace('.csv', '_angular_profiles.csv')
+        # filename_angularsec = filename_angular.replace('profiles', 'radius')
 
-        # Write the results for the main matrix, in two different files
-        filename_rad = filename.replace('.csv', '_radial_profiles.csv')
-        filename_angular = filename.replace('.csv', '_angular_profiles.csv')
-        filename_angularsec = filename_angular.replace('profiles', 'radius')
+        # # Check which vesicles have radial profiles in them, and which have angular profiles
+        # ves_rad = [x for x,y in profiles_results.items() if y['radial'] is not None]
+        # ves_angular = [x for x,y in profiles_results.items() if y['angular'] is not None]
 
-        # Check which vesicles have radial profiles in them, and which have angular profiles
-        ves_rad = [x for x,y in profiles_results.items() if y['radial'] is not None]
-        ves_angular = [x for x,y in profiles_results.items() if y['angular'] is not None]
-
-        # Write radial profiles, if found
-        if len(ves_rad) >= 1:
-            # Initialise array
-            array_tosave = np.zeros(7)
-            for ives in ves_rad:
-                nves = int(ives.split(' ')[-1])
-                results_ves = profiles_results[ives]['radial']
-                for ich, results_ch in results_ves.items():
-                    nch = int(ich.split(' ')[-1])
-                    ves_array = np.full((results_ch.shape[0],1), nves)
-                    ch_array = np.full_like(ves_array, nch)
-                    mid_array = np.hstack([ves_array, ch_array, results_ch])
-                    array_tosave = np.vstack([array_tosave, mid_array])
+        # # Write radial profiles, if found
+        # if len(ves_rad) >= 1:
+        #     # Initialise array
+        #     array_tosave = np.zeros(7)
+        #     for ives in ves_rad:
+        #         nves = int(ives.split(' ')[-1])
+        #         results_ves = profiles_results[ives]['radial']
+        #         for ich, results_ch in results_ves.items():
+        #             nch = int(ich.split(' ')[-1])
+        #             ves_array = np.full((results_ch.shape[0],1), nves)
+        #             ch_array = np.full_like(ves_array, nch)
+        #             mid_array = np.hstack([ves_array, ch_array, results_ch])
+        #             array_tosave = np.vstack([array_tosave, mid_array])
         
-            np.savetxt(filename_rad, array_tosave[1:], header = header_main_rad, delimiter = ',', 
-                    fmt = '%i, %i, ' + '%.2f, '*5)
-            print(f'Radial intensity profiles saved in {filename_rad}')
+        #     np.savetxt(filename_rad, array_tosave[1:], header = header_main_rad, delimiter = ',', 
+        #             fmt = '%i, %i, ' + '%.2f, '*5)
+        #     print(f'Radial intensity profiles saved in {filename_rad}')
         
-        # Write angular profiles, if found
-        if len(ves_angular) >= 1:
-            # Initialise array
-            array_tosave = np.zeros(7)
-            arraysec_tosave = np.zeros(4)
-            for ives in ves_angular:
-                nves = int(ives.split(' ')[-1])
-                results_ves = profiles_results[ives]['angular']
-                for ich, results_ch in results_ves.items():
-                    if results_ch is not None:
-                        ves_array = np.full((results_ch.shape[0],1), nves)
-                        if 'ch' in ich:
-                            nch = int(ich.split(' ')[-1])
-                            ch_array = np.full_like(ves_array, nch)
-                            theta_vec = np.zeros_like(ch_array)
-                            mid_array = np.hstack([ves_array, ch_array, results_ch])
-                            array_tosave = np.vstack([array_tosave, mid_array])
-                            theta_vec[:,0] = results_ch[:,0]
-                        else:
-                            mid_array = np.hstack([ves_array, theta_vec, results_ch])
-                            arraysec_tosave = np.vstack([arraysec_tosave, mid_array])
+        # # Write angular profiles, if found
+        # if len(ves_angular) >= 1:
+        #     # Initialise array
+        #     array_tosave = np.zeros(7)
+        #     arraysec_tosave = np.zeros(4)
+        #     for ives in ves_angular:
+        #         nves = int(ives.split(' ')[-1])
+        #         results_ves = profiles_results[ives]['angular']
+        #         for ich, results_ch in results_ves.items():
+        #             if results_ch is not None:
+        #                 ves_array = np.full((results_ch.shape[0],1), nves)
+        #                 if 'ch' in ich:
+        #                     nch = int(ich.split(' ')[-1])
+        #                     ch_array = np.full_like(ves_array, nch)
+        #                     theta_vec = np.zeros_like(ch_array)
+        #                     mid_array = np.hstack([ves_array, ch_array, results_ch])
+        #                     array_tosave = np.vstack([array_tosave, mid_array])
+        #                     theta_vec[:,0] = results_ch[:,0]
+        #                 else:
+        #                     mid_array = np.hstack([ves_array, theta_vec, results_ch])
+        #                     arraysec_tosave = np.vstack([arraysec_tosave, mid_array])
         
-            np.savetxt(filename_angular, array_tosave[1:], header = header_main_theta, delimiter = ',', 
-                    fmt = '%i, %i, ' + '%.2f, '*5)
-            print(f'Angular intensity profiles saved in {filename_angular}')
+        #     np.savetxt(filename_angular, array_tosave[1:], header = header_main_theta, delimiter = ',', 
+        #     #         fmt = '%i, %i, ' + '%.2f, '*5)
+        #     print(f'Angular intensity profiles saved in {filename_angular}')
             
-            if len(arraysec_tosave) > 4: 
-                np.savetxt(filename_angularsec, arraysec_tosave[1:], header = header_sec_theta, delimiter = ',',
-                        fmt = '%i, ' +  '%.2f, '*3)
-                print(f'Angular contours saved in {filename_angularsec}')
+        #     if len(arraysec_tosave) > 4: 
+        #         np.savetxt(filename_angularsec, arraysec_tosave[1:], header = header_sec_theta, delimiter = ',',
+        #                 fmt = '%i, ' +  '%.2f, '*3)
+        #         print(f'Angular contours saved in {filename_angularsec}')
             
     def encapsulation_results(filename, encap_results, mask_matrix):
-
-        # Header for the encapsulation results
-        header_file = 'ROI, xc (pix), yc (pix), <I> roi (a.u.), A roi (pix^2)'
+        print(encap_results)
+        encap_results.to_csv(filename + '.csv')
+        # # Header for the encapsulation results
+        # header_file = 'ROI, xc (pix), yc (pix), <I> roi (a.u.), A roi (pix^2)'
         
-        np.savetxt(filename + '.csv', encap_results, header = header_file, delimiter = ',', 
-                            fmt = '%i, '*3 + '%.2f, '*2)
+        # np.savetxt(filename + '.csv', encap_results, header = header_file, delimiter = ',', 
+        #                     fmt = '%i, '*3 + '%.2f, '*2)
         
         # Export also the masked image as a uint8 tiff image. This is for keeping a small size
         image_tosave = Image.fromarray(mask_matrix)

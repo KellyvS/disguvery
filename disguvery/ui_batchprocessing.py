@@ -20,6 +20,8 @@
 
 from tkinter import ttk
 import tkinter.filedialog
+import pandas as pd
+import numpy as np
 
 import os
 
@@ -159,8 +161,7 @@ class BatchPanel():
 
             # Settings batch processing
             settings_batch = controller.appdata_settingsbatch
-            det_results, bma_results, profiles_results, encap_results = BatchRun.run(controller, source_image, settings_batch,
-                                                                    display_results = False)
+            det_results, bma_results, profiles_results, encap_results = BatchRun.run(controller, source_image, settings_batch, img_info=(img_info['XRes'],img_info['YRes']), display_results = False)
 
             # Export the desired results
             if settings_batch['vesdet'][1].get() == 1 and det_results is not None:
@@ -227,7 +228,7 @@ class BatchPanel():
 
 class BatchRun(): 
                   
-    def run(controller, mat_image, settings_batch, display_results = True): 
+    def run(controller, mat_image, settings_batch, img_info, display_results = True): 
 
         # Get vesicle detection method
         det_method = settings_batch['vesdet_method'][0].get().lower()
@@ -309,22 +310,24 @@ class BatchRun():
             angular_profiles_all = BatchRun.anprofiles(mat_image, len(det_results['rois']), results_forint, 
                                                     intan_channels, settings_int,
                                                     controller.appdata_channels)
+            
         if intrad_channels:
             # Run radial integration
             print('Computing radial intensity profiles...')
             radial_profiles_all = BatchRun.radprofiles(mat_image, len(det_results['rois']), results_forint, 
                                                     intrad_channels, settings_int)
-        if None not in [angular_profiles_all, radial_profiles_all]:
-            profiles_results = {}
-            try: 
-                keys_ves = angular_profiles_all.keys()
-            except AttributeError:
-                keys_ves = radial_profiles_all.keys()
-            for ikey in keys_ves:
-                profiles_results[ikey] = {'angular': angular_profiles_all.get(ikey, None),
-                                        'radial': radial_profiles_all.get(ikey, None)}
-        else: profiles_results = None
-
+        # if None not in [angular_profiles_all, radial_profiles_all]:
+        #     profiles_results = {}
+        #     try: 
+        #         keys_ves = angular_profiles_all.keys()
+        #     except AttributeError:
+        #         keys_ves = radial_profiles_all.keys()
+        #     for ikey in keys_ves:
+        #         profiles_results[ikey] = {'angular': angular_profiles_all.get(ikey, None),
+        #                                 'radial': radial_profiles_all.get(ikey, None)}
+        # else: profiles_results = None
+        profiles_results = pd.merge(radial_profiles_all, angular_profiles_all, on='label')
+        print(profiles_results)
         # Run the encapsulation efficiency analysis
         if settings_batch['metrics_encap'][0].get() == 1:
             print('Computing Encapsulation Efficiency')
@@ -343,7 +346,7 @@ class BatchRun():
             # Get the labels mask. The detection is to be done on the enhanced image
             m_image = ImageCheck.single_channel(enhanced_image, ch_membrane)
             mask_labels = BatchRun.encapsulation_mask(m_image, mask_source, det_results, encap_settings)
-            encap_results = BatchRun.encapsulation(mat_image, mask_labels, ch_encap, bg_corr)
+            encap_results = BatchRun.encapsulation(mat_image, mask_labels, ch_encap, bg_corr, img_info)
             # Visualize mask used
             if display_results is True:
                 controller.gw_maindisplay.overlay_mask(mask_labels, alpha = 0.3, remove_old = True)
@@ -423,43 +426,90 @@ class BatchRun():
         #  Get angular interval
         dtheta = int(settings_int['angular_profile'][1].get())
 
-        # Run the computation for all the vesicles.
-        # Initialise variable to store the results
-        all_profiles = {}
-        # Compute for each desired channel
+        column_names = [f'mean_intensity_ang_{channel}' for channel in ch_toint]
+        column_names.extend([f'mean_theta_{channel}' for channel in ch_toint])
+        column_names.extend([f'min_intensity_ang_{channel}' for channel in ch_toint])
+        column_names.extend([f'max_intensity_ang_{channel}' for channel in ch_toint])
+        column_names.extend(['label'])
+        angular_df= pd.DataFrame(columns=column_names)
+        #Compute background subtraction
+        mat_image = input_image
         for ic in ch_toint:
+            bg_corr = settings_int['bg_corr'][ic-1].get()
+            if 'Image' in bg_corr: 
+                mat_image[:,:,ic-1] = ImageCorrection.substract_background(mat_image[:,:,ic-1].astype('float32'), corr_type = bg_corr)
             # Get the type of structure labeled with the channel. If membrane, apply rlim
             if 'membrane' in appdata_channels[ic].get(): 
                 rlim_channel = True
             else:
-                rlim_channel = None
-            # Get the image from the corresponding channel
-            mat_image = ImageCheck.single_channel(input_image, ic)
-            # Correct the background intensity for the whole image, if required
-            bg_corr = settings_int['bg_corr'][ic-1].get()
-            if 'Image' in bg_corr: 
-                mat_image = ImageCorrection.substract_background(mat_image.astype('float16'), corr_type = bg_corr)
-
-            for ivesicle in range(nvesicles):
+                rlim_channel = None   
+        rows= []
+        for ivesicle in range(nvesicles):
+            row_data = {'label' : ivesicle + 1}
+            for ic in ch_toint:
                 # Get bounding box
-                image_bbox, bbox_center, rlim_results = BatchRun.bbox_profiles(mat_image, det_results, int(ivesicle))
+                image_bbox, bbox_center, rlim_results = BatchRun.bbox_profiles(mat_image[:,:,ic-1], det_results, int(ivesicle))
                 # Set limits to compute segmented membrane radius
                 if rlim_channel is True:
                     rlim_channel = rlim_results
-               
                 # Correct background intensity for the ROI, if required
                 if 'ROI' in bg_corr:
-                    image_bbox = ImageCorrection.substract_background(image_bbox.astype('float16'), corr_type = bg_corr)
+                    image_bbox = ImageCorrection.substract_background(image_bbox.astype('float32'), corr_type = bg_corr)
+                # Compute the radial profiles
                 # Compute angular profiles
                 angular_profiles, mean_radius, _ = ProfileIntegration.angular(image_bbox, bbox_center[0:2], dtheta,
                                                                             rlim = rlim_channel, 
-                                                                            norm = norm_int)
-                s_vesicle = f'ves {ivesicle + 1}'
-                if s_vesicle not in all_profiles.keys():
-                    all_profiles[s_vesicle] = {'mean radius': mean_radius}
-                all_profiles[f'ves {ivesicle + 1}'][f'ch {ic}'] =  angular_profiles
+                                                                            norm = norm_int) 
+                row_data[f'mean_intensity_ang_{ic}'] = angular_profiles[:, 1]
+                row_data[f'min_intensity_ang_{ic}'] = angular_profiles[:, 2]
+                row_data[f'max_intensity_ang_{ic}'] = angular_profiles[:, 3]
+                row_data[f'sum_intensity_ang_{ic}'] = angular_profiles[:, 4]
+                row_data[f'mean_theta_{ic}'] = angular_profiles[:,0]
+            
+                # Append row to dataframe
+
+            rows.append(row_data)
+        
+        angular_df = pd.concat([angular_df, pd.DataFrame(rows)])  
+    
+
+        # # Run the computation for all the vesicles.
+        # # Initialise variable to store the results
+        # all_profiles = {}
+        # # Compute for each desired channel
+        # for ic in ch_toint:
+        #     # Get the type of structure labeled with the channel. If membrane, apply rlim
+        #     if 'membrane' in appdata_channels[ic].get(): 
+        #         rlim_channel = True
+        #     else:
+        #         rlim_channel = None
+        #     # Get the image from the corresponding channel
+        #     mat_image = ImageCheck.single_channel(input_image, ic)
+        #     # Correct the background intensity for the whole image, if required
+        #     bg_corr = settings_int['bg_corr'][ic-1].get()
+        #     if 'Image' in bg_corr: 
+        #         mat_image = ImageCorrection.substract_background(mat_image.astype('float16'), corr_type = bg_corr)
+
+        #     for ivesicle in range(nvesicles):
+        #         # Get bounding box
+        #         image_bbox, bbox_center, rlim_results = BatchRun.bbox_profiles(mat_image, det_results, int(ivesicle))
+        #         # Set limits to compute segmented membrane radius
+        #         if rlim_channel is True:
+        #             rlim_channel = rlim_results
+               
+        #         # Correct background intensity for the ROI, if required
+        #         if 'ROI' in bg_corr:
+        #             image_bbox = ImageCorrection.substract_background(image_bbox.astype('float16'), corr_type = bg_corr)
+        #         # Compute angular profiles
+        #         angular_profiles, mean_radius, _ = ProfileIntegration.angular(image_bbox, bbox_center[0:2], dtheta,
+        #                                                                     rlim = rlim_channel, 
+        #                                                                     norm = norm_int)
+        #         s_vesicle = f'ves {ivesicle + 1}'
+        #         if s_vesicle not in all_profiles.keys():
+        #             all_profiles[s_vesicle] = {'mean radius': mean_radius}
+        #         all_profiles[f'ves {ivesicle + 1}'][f'ch {ic}'] =  angular_profiles
                 
-        return all_profiles
+        return angular_df
 
     def radprofiles(input_image, nvesicles, det_results, ch_toint, settings_int):
 
@@ -471,23 +521,30 @@ class BatchRun():
 
         # Run the computation for all the vesicles. 
         # Initialise variable to store the results
-        all_profiles = {}
-
-        # Compute for each desired channel
+        rows= []
+        column_names = [f'mean_intensity_rad_{channel}' for channel in ch_toint]
+        column_names.extend([f'mean_radius_{channel}' for channel in ch_toint])
+        column_names.extend([f'min_intensity_rad_{channel}' for channel in ch_toint])
+        column_names.extend([f'max_intensity_rad_{channel}' for channel in ch_toint])
+        column_names.extend(['label'])
+        radial_df= pd.DataFrame(columns=column_names)
+        #Compute background subtraction
+        mat_image = input_image
         for ic in ch_toint:
-            # Get the image from the corresponding channel
-            mat_image = ImageCheck.single_channel(input_image, ic)
-            # Correct the background intensity for the whole image, if required
             bg_corr = settings_int['bg_corr'][ic-1].get()
             if 'Image' in bg_corr: 
-                mat_image = ImageCorrection.substract_background(mat_image.astype('float16'), corr_type = bg_corr)
-            for ivesicle in range(nvesicles):
+                mat_image[:,:,ic-1] = ImageCorrection.substract_background(mat_image[:,:,ic-1].astype('float32'), corr_type = bg_corr)
+                
+        
+        for ivesicle in range(nvesicles):
+            row_data = {'label' : ivesicle + 1}
+            for ic in ch_toint:
                 # Get bounding box
-                image_bbox, bbox_center, rlim_results = BatchRun.bbox_profiles(mat_image, det_results, int(ivesicle))
+                image_bbox, bbox_center, rlim_results = BatchRun.bbox_profiles(mat_image[:,:,ic-1], det_results, int(ivesicle))
                 
                 # Correct background intensity for the ROI, if required
                 if 'ROI' in bg_corr:
-                    image_bbox = ImageCorrection.substract_background(image_bbox.astype('float16'), corr_type = bg_corr)
+                    image_bbox = ImageCorrection.substract_background(image_bbox.astype('float32'), corr_type = bg_corr)
                 # Compute the radial profiles
                 radial_profiles, found_error = ProfileIntegration.radial(image_bbox, bbox_center[0:2], dr, 
                                                                     norm = norm_int)
@@ -495,12 +552,48 @@ class BatchRun():
                 if norm_rad is True:
                     radial_profiles[:,0] /= bbox_center[-1]
                 
-                s_vesicle = f'ves {ivesicle + 1}'
-                if s_vesicle not in all_profiles.keys():
-                    all_profiles[s_vesicle] = { }
-                all_profiles[f'ves {ivesicle + 1}'][f'ch {ic}'] =  radial_profiles
+                row_data[f'mean_intensity_rad_{ic}'] = radial_profiles[:, 1]
+                row_data[f'min_intensity_rad_{ic}'] = radial_profiles[:, 2]
+                row_data[f'max_intensity_rad_{ic}'] = radial_profiles[:, 3]
+                row_data[f'sum_intensity_rad_{ic}'] = radial_profiles[:, 4]
+                row_data[f'mean_radius_{ic}'] = radial_profiles[:,0]
+            
+                # Append row to dataframe
 
-        return all_profiles
+            rows.append(row_data)
+        
+        radial_df = pd.concat([radial_df, pd.DataFrame(rows)])  
+         
+
+        # # Compute for each desired channel
+        # all_profiles = {}
+        # for ic in ch_toint:
+        #     # Get the image from the corresponding channel
+        #     mat_image = ImageCheck.single_channel(input_image, ic)
+        #     # Correct the background intensity for the whole image, if required
+        #     bg_corr = settings_int['bg_corr'][ic-1].get()
+        #     if 'Image' in bg_corr: 
+        #         mat_image = ImageCorrection.substract_background(mat_image.astype('float16'), corr_type = bg_corr)
+        #     for ivesicle in range(nvesicles):
+        #         # Get bounding box
+        #         image_bbox, bbox_center, rlim_results = BatchRun.bbox_profiles(mat_image, det_results, int(ivesicle))
+                
+        #         # Correct background intensity for the ROI, if required
+        #         if 'ROI' in bg_corr:
+        #             image_bbox = ImageCorrection.substract_background(image_bbox.astype('float16'), corr_type = bg_corr)
+        #         # Compute the radial profiles
+        #         radial_profiles, found_error = ProfileIntegration.radial(image_bbox, bbox_center[0:2], dr, 
+        #                                                             norm = norm_int)
+        #         # If required, normalise the radius
+        #         if norm_rad is True:
+        #             radial_profiles[:,0] /= bbox_center[-1]
+                
+        #         s_vesicle = f'ves {ivesicle + 1}'
+        #         if s_vesicle not in all_profiles.keys():
+        #             all_profiles[s_vesicle] = { }
+        #         all_profiles[f'ves {ivesicle + 1}'][f'ch {ic}'] =  radial_profiles
+
+        return radial_df
 
     def bbox_profiles(mat_image, det_results, ivesicle):
 
@@ -546,14 +639,14 @@ class BatchRun():
 
         return mask_labels
     
-    def encapsulation(input_image, mask_labels, channels, bg_corr):
+    def encapsulation(input_image, mask_labels, channels, bg_corr, img_info):
         
         # Compute the encapsulation efficiency for each selected channel
         # Initialise variable to store results
         encap_results = {}
         for ich in channels:
             mat_image = ImageCheck.single_channel(input_image, ich)
-            encap_results_ch, _ = EncapEfficiency.run(mat_image, mask_labels, bg_corr)
+            encap_results_ch, _ = EncapEfficiency.run(mat_image, mask_labels, bg_corr, pixel_size = img_info)
             masked_image = mat_image*(mask_labels >0).astype(int)
             encap_results[f'ch {ich}'] = [encap_results_ch, masked_image]
 

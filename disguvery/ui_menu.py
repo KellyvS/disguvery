@@ -129,7 +129,7 @@ class MenuFile(tk.Menu):
                 # Attempt to load the image file
                 print(f'\n Loading file: {ifile}')
                 image_info, image_name, source_image = FileImage.open(ifile)
-
+                print(image_info)
                 # If supported, store the file information and update the source image
                 if source_image is not None:
                     self.controller.appdata_imagesource['image'] = source_image
